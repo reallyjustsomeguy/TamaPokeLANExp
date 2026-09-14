@@ -186,6 +186,42 @@ only moves when `main` does. That is the other reason a release that never gets
 merged is only half a release: the tags exist, and everybody visiting the page
 still gets the old firmware.
 
+**On a Windows checkout, `build_web.sh`'s cache-key step can stamp a hash that
+is correct locally and wrong on every other machine.** v3.26 failed
+`check_release.py` on CI for exactly this, and the GitHub Actions job logs are
+not readable without an admin token (`403` even on a public repo), so it took a
+from-scratch repro to find. Cause: `core.autocrlf=true` (the common Windows Git
+default) rewrites the committed LF-only `web/*.js`/`*.html` to CRLF **on
+checkout**, silently, before anything reads them. `build_web.sh` then hashes
+those CRLF bytes and stamps that hash into `installer.js`'s `savefile.js`
+import and `index.html`'s `installer.js` tag -- so the stamped value matches
+the *local* working tree and mismatches the LF blob every other checkout
+(Linux CI, a visitor's browser after a Pages deploy) actually gets.
+`.gitattributes` now forces `eol=lf` for `web/*.js/html/json/css` on every
+platform, which is the real fix -- it makes the working tree match the blob
+everywhere, not just on Linux. **If this repeats after touching `.gitattributes`
+or adding a new hashed web asset, check `git show HEAD:<path> | git hash-object
+--stdin` against the working-tree file's hash before suspecting the script.**
+
+A second, independent trap in the same code: `pathlib.Path.write_text()`
+translates `\n` to `os.linesep` on write, so even a script that reads the
+correct LF bytes can reintroduce CRLF the moment it writes them back on
+Windows -- `encoding='utf-8'` does not prevent this, only `newline=''` does,
+and older Python here does not accept `newline=` on `Path.read_text()`/
+`write_text()` at all. `build_web.sh`'s cache-key rewrite now reads and writes
+raw bytes (`.read_bytes().decode(...)` / `.write_bytes(...encode(...))`)
+instead, which side-steps the whole newline-translation question. Do the same
+for any future script that rewrites a hash-verified web asset in place.
+
+Separately, but discovered chasing the same failure: `check_release.py` and
+`check_installer.py` originally opened text files with no `encoding=` argument
+at all, so both inherit the OS default codec -- `cp1252` on this machine, which
+raises `UnicodeDecodeError` on `README.md`'s em dashes the moment a non-ASCII
+byte appears. This was NOT what broke v3.26 on CI (ubuntu-latest defaults to a
+UTF-8 locale), but it is a real, separate bug on any machine that isn't. Every
+text read in both scripts now passes `encoding="utf-8"` explicitly; keep doing
+that for any new one.
+
 ## Build & flash
 
 ```bash

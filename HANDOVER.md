@@ -27,6 +27,15 @@ restart. Read this with `CLAUDE.md`, which is the permanent knowledge and is
 > accelerometer samples does, confirmed on real hardware with a calibrated
 > threshold, after a second, unrelated bug (`getDataReady()`) nearly hid that
 > too.
+>
+> **§ 1d is 2026-09-14** and is infrastructure, not gameplay: this repo went
+> from a local checkout to a real public fork on GitHub
+> (`reallyjustsomeguy/TamaPokeLANExp`), the README was rewritten end to end,
+> and v3.26 is the first release actually cut through `check_release.py` on
+> this fork's own CI. Two real, separate release-tooling bugs were found and
+> fixed doing it — see CLAUDE.md § "Releasing" for the technical detail, which
+> takes priority over anything in HANDOVER.md if the two ever disagree on the
+> mechanism.
 
 ---
 
@@ -65,8 +74,9 @@ Not done: a board has not seen any of it, and the installer has not been rebuilt
 
 | | |
 |---|---|
-| Published firmware | **v3.22**, live at https://eperdeme.github.io/TamaPoke/web/ |
-| Repo version | **v3.22** in `TamaPoke.ino`, merged to `main` and tagged |
+| Published firmware | **v3.26**, live at https://reallyjustsomeguy.github.io/TamaPokeLANExp/web/ |
+| Repo version | **v3.26** in `TamaPoke.ino`, merged to `main` and tagged, GitHub Release published |
+| GitHub repo | fork `reallyjustsomeguy/TamaPokeLANExp`, of `DylanPDao/TamaPoke`, of `socquique/TamaPoke` (the original) |
 | Dex | `DEX_COUNT` **1025**, `REGION_COUNT` 10, `GYM_REGIONS` 7 |
 | Your board | last flashed **v3.20**; v3.21 and v3.22 have not been on hardware |
 | Live creature | Venusaur L100, `iv=29/20/19/22 tr=0/16/9`, bond 84, 12 medals |
@@ -316,6 +326,85 @@ Separately, and unrelated to the Mart: the clock/settings screen's cancel
 hint said "swipe up: cancel" in all six languages when the actual gesture is
 swipe down (`onSwipeV`'s `back = dir > 0`) -- fixed everywhere.
 `FW_VERSION` moved 3.25 -> 3.26 across this work.
+
+---
+
+## 1d. Pushed to GitHub, README rewritten, v3.26 actually released (2026-09-14)
+
+This session moved the project from a personal local checkout to a real public
+fork with a real release, and found two genuine release-tooling bugs doing it
+— neither was in game code.
+
+**The fork chain, and why the remote was wrong all session.** This repo is
+`reallyjustsomeguy/TamaPokeLANExp`, forked from `DylanPDao/TamaPoke`, forked
+from the original `socquique/TamaPoke`. The local `origin` remote was still
+pointed at `eperdeme/TamaPoke` — a different, unrelated fork this checkout's
+history passed through earlier — for the entire session; every push used an
+explicit full URL to the real fork instead of `git push`/`git pull` on
+`origin`. Fixed at the end of the session with `git remote set-url origin
+https://github.com/reallyjustsomeguy/TamaPokeLANExp.git`. **If a `git log
+origin/main` or a plain `git push` looks stale or goes somewhere unexpected,
+check `git remote -v` first** — this is exactly the shape of bug that a
+`git status` telling you "up to date with origin/main" will not surface.
+
+**The README was rewritten end to end** — Game manual reordered to follow the
+actual player journey (controls → time/leveling → actions/stats → region →
+starter → egg → raising → evolution → exploring/battling/gyms/LAN → retiring →
+deeper systems), several rounds of self-introduced duplication found and cut,
+the Community forks section removed in favor of a two-line fork chain in
+Credits, and the "Added in this fork" bullets rewritten to be accurate (the
+pedometer is not called "software" to the player, LAN battles are described as
+scanning over WiFi Direct rather than naming ESP-NOW). Screenshots regenerated
+via `tools/make_screens.sh`, which had never actually included the Poké Mart
+in its `SHOTS` list despite the emulator supporting the shot — see CLAUDE.md's
+own section on why this three-list reconciliation rots quietly.
+
+**The web installer was rebuilt for the current firmware** and every
+`eperdeme/TamaPoke` reference still in `web/` (not just the README) was
+repointed at the fork — `web/editions.json`'s `"repository"` field is the
+functionally important one, since `installer.js` reads it to fetch release
+history from GitHub's API; a stale value there silently shows the wrong
+project's changelog, not just a wrong link.
+
+**Cutting the actual release found two bugs, and the first diagnosis was
+wrong.** `v3.26`'s first tag push failed `check_release.py` in CI. There is no
+way to read a GitHub Actions job log without an admin token — even on a public
+repo, the logs API returns `403 Must have admin rights to Repository` to an
+anonymous request — so the only way to see what actually failed, short of
+asking the repo owner to paste it, was a from-scratch clone reproducing the
+workflow's exact steps.
+
+1. **First fix (real bug, wrong culprit).** `check_release.py`/
+   `check_installer.py` read text files with no `encoding=` argument, so both
+   inherit the OS default codec — `cp1252` on this Windows machine, which threw
+   `UnicodeDecodeError` on `README.md`'s em dashes. This reproduced identically
+   in a fresh clone and looked exactly like the CI failure, so it shipped as
+   The Fix. It was a real, worth-keeping fix (any non-UTF-8-locale machine
+   would hit it) — but ubuntu-latest's CI runner defaults to a UTF-8 locale,
+   so it was **never what actually broke v3.26**, and the retagged release
+   failed again identically after this "fix" landed. Lesson: a local repro
+   matching the symptom is not proof of the mechanism when the repro runs on
+   the same OS that might be the actual variable.
+2. **Second fix (the real bug).** The user pasted the actual CI log line by
+   hand (the only working path, given the 403 above):
+   `web/installer.js points at savefile.js?v=122683f213e38dbd, expected
+   1e0c9406aa8d98ea`. Cause: this machine's `core.autocrlf=true` rewrites the
+   committed LF-only `web/*.js` to CRLF on checkout, and `build_web.sh` hashes
+   the working-tree bytes — so the stamped cache-key hash matched the local
+   CRLF copy and nothing else. Fixed with a new `.gitattributes` forcing
+   `eol=lf` for `web/*.js/html/json/css` on every platform, plus rewriting
+   `build_web.sh`'s own hash/rewrite step to use raw bytes instead of
+   `pathlib`'s text mode (`Path.write_text()` reintroduces platform-native
+   line endings on write regardless of `encoding=`). Full mechanism in
+   CLAUDE.md § "Releasing".
+
+`v3.26`'s tag was deleted and recreated twice during this — once onto the
+first (wrong) fix, once onto the second (real) one — before the retagged push
+finally passed CI and published. No GitHub Release existed for either failed
+attempt, so nothing public was ever rolled back; only the tag ref moved.
+**Do not read this as license to casually retag a real release** — both
+retags were confirmed with the user first, specifically because a pushed tag
+is shared state.
 
 ---
 
