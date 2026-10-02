@@ -36,6 +36,13 @@ restart. Read this with `CLAUDE.md`, which is the permanent knowledge and is
 > fixed doing it — see CLAUDE.md § "Releasing" for the technical detail, which
 > takes priority over anything in HANDOVER.md if the two ever disagree on the
 > mechanism.
+>
+> **§ 1e is later the same day** (2026-09-14) — a separate session, within
+> hours of § 1d, that shipped v3.27 (three real fixes, LAN/battle/test) and
+> then v3.28 (an installer-only re-release needed because v3.27's own installer
+> work landed *after* that tag). Hit the exact autocrlf/cache-key bug class
+> from § 1d twice more and fixed both; the current state is self-consistent
+> and CI-verified.
 
 ---
 
@@ -74,8 +81,8 @@ Not done: a board has not seen any of it, and the installer has not been rebuilt
 
 | | |
 |---|---|
-| Published firmware | **v3.26**, live at https://reallyjustsomeguy.github.io/TamaPokeLANExp/web/ |
-| Repo version | **v3.26** in `TamaPoke.ino`, merged to `main` and tagged, GitHub Release published |
+| Published firmware | **v3.28**, live at https://reallyjustsomeguy.github.io/TamaPokeLANExp/web/ |
+| Repo version | **v3.28** in `TamaPoke.ino`, merged to `main` and tagged, GitHub Release published |
 | GitHub repo | fork `reallyjustsomeguy/TamaPokeLANExp`, of `DylanPDao/TamaPoke`, of `socquique/TamaPoke` (the original) |
 | Dex | `DEX_COUNT` **1025**, `REGION_COUNT` 10, `GYM_REGIONS` 7 |
 | Your board | last flashed **v3.20**; v3.21 and v3.22 have not been on hardware |
@@ -405,6 +412,77 @@ attempt, so nothing public was ever rolled back; only the tag ref moved.
 **Do not read this as license to casually retag a real release** — both
 retags were confirmed with the user first, specifically because a pushed tag
 is shared state.
+
+---
+
+## 1e. v3.27 and v3.28, hours later the same day (2026-09-14)
+
+A separate session from § 1d, picking up right where it left off. Three real
+firmware/test fixes shipped as v3.27, then a same-day installer-only v3.28
+because of a release-ordering gap worth understanding.
+
+**v3.27 (`d63ebc7`):**
+
+1. `link.cpp`/`link.h` reused one `peerName` field for both the outgoing
+   `HELLO` name and the incoming one — exactly the latent bug flagged but left
+   unfixed in § 1b, because normal pairing always finishes before the resend
+   path that would corrupt it. Fixed properly this time: a separate `myName`,
+   written once in `begin()` and read only by `sendHello()`; `peerName` is
+   now write-once from `onPacket()`, read-only for display.
+2. A wild win or catch never set `btlWinUntil` (trainer-only), so it skipped
+   the `audioMusic(MUS_NONE)` on that dismiss path — victory music kept
+   playing straight into the main screen. Moved the stop to the
+   message-queue dismiss instead, which fires after every win/catch/item-drop
+   line has actually been read.
+3. `focus_test.cpp` was asserting superseded behavior for a total checkpoint
+   failure (claimed the incoming pet stays live in RAM for a later save to
+   catch up — the real code rolls back to the outgoing pet instead, which is
+   the correct call: leaving incoming live uncommitted would be the same
+   duplicate-creature bug pointed the other way). Test and the matching
+   CLAUDE.md § "1a" note on `focusSwap()` both corrected. 41/41 suites green.
+
+**Then the installer got a real round of UX work and one real bug fix**
+(`3df9cea`, `a3590b1`, `3429f4a`, `e81ebdb`): `backupThenFlash()`'s
+programmatic `flash-button.click()` fired after several `await`s, and by then
+the browser had dropped the "transient activation" `navigator.serial.
+requestPort()` needs — so Backup-then-install silently did nothing, no
+dialog, no error, nothing logged. Fixed by not forwarding the click at all:
+a successful backup now relabels the real install button "Install now" and a
+genuine click is what starts the flash. Along the way: the backup button's
+color changed to the firmware's own "ready" green, which needed two CSS
+specificity fixes to actually hold through its disabled/hover states, and
+esp-web-tools' own install dialog now shows `TamaPoke v{version}` instead of
+a bare, unversioned "Install TamaPoke".
+
+**Why v3.28 exists:** the installer fixes above landed as commits *after*
+v3.27 was already tagged and released. GitHub Pages served the correct live
+`web/manifest.json` throughout, but `installer.js` deliberately prefers a
+matching *published release's* frozen content once one exists
+(`hasCurrentRelease`), so nobody actually saw any of the installer work.
+Rather than force-move the already-published `v3.27` tag — which § 1d's
+closing note says not to do casually — this cut a proper `v3.28` through the
+normal flow instead. Firmware itself is byte-identical to v3.27 except the
+version string.
+
+**The exact autocrlf/line-ending cache-key bug from § 1d recurred twice more**
+(`bcb903c`, `b39cc38`), both times because the installer UX edits above
+changed `web/installer.js`'s real content, which needed its cache-key
+re-stamped in `index.html` — and the re-stamp briefly picked up a CRLF-tainted
+hash again before being corrected against the actual committed git blob.
+Both were caught immediately by `check_release.py` on CI, exactly as that
+check exists to do, and both are fixed: as of this writing `web/installer.js`'s
+real blob hash and `index.html`'s stamped value agree, verified directly
+against `origin/main`, not just locally.
+
+**Housekeeping found needed and done in a follow-up (2026-10-01):** this
+session's one local commit (the § 1d/1e documentation writeup) had never
+actually been pushed, and had drifted — rebased cleanly onto the real
+`origin/main` once noticed (clean rebase: it and the one remote edit to
+`CLAUDE.md` touched different sections). **If a local checkout of this repo
+has sat for more than a day or two, `git fetch origin && git log
+main..origin/main` before assuming it reflects what is actually live** — this
+fork moves across multiple same-day sessions that do not always share a
+checkout.
 
 ---
 
